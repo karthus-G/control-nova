@@ -1,24 +1,18 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
-import gspread
 
 st.set_page_config(page_title="Control Diario Nova", layout="wide")
 
-# Conexión directa y ultra-estable usando la URL secreta
-@st.cache_data(ttl="0m")
-def cargar_datos():
-    url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-    gc = gspread.public_api()
-    sh = gc.open_by_url(url)
-    worksheet = sh.get_worksheet(0)
-    data = worksheet.get_all_records()
-    return pd.DataFrame(data), worksheet
+# Conexión nativa de Streamlit para Google Sheets
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
-    df, worksheet = cargar_datos()
+    # Lee los datos directamente usando la configuración de Secrets
+    df = conn.read(ttl="0m")
 except Exception as e:
-    st.error("Error al conectar con Google Sheets. Verifica que el archivo sea público para cualquiera con el enlace en modo Editor.")
+    st.error("Error al conectar con la base de datos de Google Drive. Por favor, verifica el enlace en Secrets.")
     st.stop()
 
 # Aseguramos que existan las columnas correspondientes
@@ -63,11 +57,15 @@ with col_izq:
             if not cuenta:
                 st.error("La CUENTA es requerida.")
             else:
-                # Añadir fila directamente a la hoja de Google Sheets
-                nueva_fila = [datetime.now().strftime("%d/%m/%Y"), cuenta, str(usd_val), str(bs_val)]
-                worksheet.append_row(nueva_fila)
+                nueva_fila = pd.DataFrame([{
+                    "FECHA": datetime.now().strftime("%d/%m/%Y"),
+                    "CUENTA": cuenta,
+                    "USD": str(usd_val),
+                    "Bs": str(bs_val)
+                }])
+                df_to_save = pd.concat([df, nueva_fila], ignore_index=True).drop(columns=["USD_CALC", "Bs_CALC"], errors="ignore")
+                conn.update(data=df_to_save)
                 st.success("¡Guardado exitosamente en Google Drive!")
-                st.cache_data.clear()
                 st.rerun()
 
 with col_der:
