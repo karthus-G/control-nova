@@ -1,16 +1,25 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
 st.set_page_config(page_title="Control Diario Nova", layout="wide")
 
-# Conexión nativa de Streamlit para Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Función ultra-estable para leer el Google Sheet convertido a CSV en tiempo real
+@st.cache_data(ttl="0m")
+def cargar_datos():
+    # Extraemos el enlace de los Secrets
+    url_base = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    
+    # Truco de magia: Transformamos el enlace para que Google nos devuelva un CSV directo sin pedir contraseñas
+    if "/edit" in url_base:
+        url_csv = url_base.split("/edit")[0] + "/export?format=csv"
+    else:
+        url_csv = url_base
+        
+    return pd.read_csv(url_csv)
 
 try:
-    # Lee los datos directamente usando la configuración de Secrets
-    df = conn.read(ttl="0m")
+    df = cargar_datos()
 except Exception as e:
     st.error("Error al conectar con la base de datos de Google Drive. Por favor, verifica el enlace en Secrets.")
     st.stop()
@@ -46,27 +55,7 @@ col_izq, col_der = st.columns(2)
 
 with col_izq:
     st.subheader("📝 Nueva Transacción")
-    with st.form(key="transaccion_form", clear_on_submit=True):
-        cuenta = st.text_input("CUENTA:").strip().upper()
-        usd_val = st.number_input("USD:", min_value=0.0, step=0.01, format="%.2f")
-        bs_val = st.number_input("Bs:", min_value=0.0, step=0.01, format="%.2f")
-        
-        btn_guardar = st.form_submit_button("✓ GUARDAR")
-        
-        if btn_guardar:
-            if not cuenta:
-                st.error("La CUENTA es requerida.")
-            else:
-                nueva_fila = pd.DataFrame([{
-                    "FECHA": datetime.now().strftime("%d/%m/%Y"),
-                    "CUENTA": cuenta,
-                    "USD": str(usd_val),
-                    "Bs": str(bs_val)
-                }])
-                df_to_save = pd.concat([df, nueva_fila], ignore_index=True).drop(columns=["USD_CALC", "Bs_CALC"], errors="ignore")
-                conn.update(data=df_to_save)
-                st.success("¡Guardado exitosamente en Google Drive!")
-                st.rerun()
+    st.info("Para registrar o modificar datos desde tu celular de forma óptima, puedes abrir tu archivo de Google Sheets directamente en la app de Drive. ¡Pronto añadiremos el botón de guardado directo aquí!")
 
 with col_der:
     st.subheader("🔍 Historial y Filtro Mensual")
