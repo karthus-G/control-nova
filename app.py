@@ -5,11 +5,11 @@ from datetime import datetime
 st.set_page_config(page_title="Control Diario Nova", layout="wide")
 
 # Usamos st.session_state para almacenar los datos en la memoria de la aplicación
-# Esto permite que los cambios y eliminaciones se vean reflejados en tiempo real inmediatamente
 if "df_base" not in st.session_state:
     url_base = st.secrets["connections"]["gsheets"]["spreadsheet"]
     if "/edit" in url_base:
-        url_csv = url_base.split("/edit") + "/export?format=csv"
+        # CORRECCIÓN AQUÍ: Usamos f-string en lugar de concatenar listas
+        url_csv = f"{url_base.split('/edit')[0]}/export?format=csv"
     else:
         url_csv = url_base
     try:
@@ -53,7 +53,7 @@ col3.metric("COMISIÓN HOY (15%)", fmt(comision_hoy))
 st.markdown("---")
 
 # --- DISEÑO DE PANTALLA ---
-col_izq, col_der = st.columns([1, 2])
+col_izq, col_der = st.columns()
 
 with col_izq:
     st.subheader("📝 Nueva Transacción")
@@ -80,7 +80,7 @@ with col_izq:
                     "Bs": bs_formateado
                 }])
                 
-                # Insertar al inicio o al final del estado de la aplicación e inyectar cambios
+                # Insertar al estado de la aplicación e inyectar cambios
                 st.session_state.df_base = pd.concat([st.session_state.df_base, nueva_fila], ignore_index=True)
                 st.success("¡Transacción añadida exitosamente abajo!")
                 st.rerun()
@@ -98,21 +98,18 @@ with col_der:
     
     st.info("💡 **Cómo eliminar registros:** Selecciona la casilla de la fila que deseas borrar en el cuadro de abajo y presiona el botón **Eliminar** de tu teclado (o el icono de papelera). Los totales de arriba cambiarán al instante.")
     
-    # El editor de datos interactivo (permite modificar texto y eliminar filas directamente)
+    # El editor de datos interactivo
     datos_editados = st.data_editor(
         df_filtrado[["FECHA", "CUENTA", "USD", "Bs"]],
         use_container_width=True,
-        num_rows="dynamic",  # Permite eliminar filas interactivamente
+        num_rows="dynamic",
         key="tabla_interactiva"
     )
     
     # Sincronizar cualquier cambio o eliminación realizada en la tabla interactiva hacia la memoria principal
     if st.checkbox("💾 Confirmar y aplicar cambios del historial"):
-        # Actualizamos la base de datos interna con lo modificado en la pantalla
         lineas_actuales = st.session_state.df_base.copy()
-        # Mantenemos las filas que no pertenecen al mes filtrado para no perder el resto del año
         df_resto = lineas_actuales[~lineas_actuales["FECHA"].astype(str).str.contains(patron, na=False)]
-        # Unimos el resto con lo que el usuario editó o borró en pantalla
         st.session_state.df_base = pd.concat([df_resto, datos_editados], ignore_index=True)
         st.success("¡Historial sincronizado!")
         st.rerun()
