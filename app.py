@@ -14,7 +14,7 @@ hoy_str = hoy_co.strftime("%d/%m/%Y")
 # URL de tu hoja (para lectura)
 READ_URL = "https://docs.google.com/spreadsheets/d/16XJJ17pfE7n-O8jBhRRTb-niqh0LBYqwubcECsjwOdA/export?format=csv"
 
-# URL DE TU APPS SCRIPT
+# URL DE TU APPS SCRIPT (¡Asegúrate de usar la NUEVA URL si la cambiaste!)
 WRITE_URL = "https://script.google.com/macros/s/AKfycbx0tSVe-9Q9rEjeylvuPRnK-rV_RTZhAhU_Ul75CpwmeTvf8442pM3O6-nhm4mu8wkawA/exec"
 
 # --- FUNCIONES DE AYUDA ---
@@ -24,6 +24,7 @@ def limpiar_numero(valor):
     if not valor: return 0.0
     try:
         texto = str(valor).replace('$', '').replace(' ', '').strip()
+        if not texto: return 0.0
         # Lógica para detectar formato
         if ',' in texto and '.' in texto:
             # Si la coma va después del punto, es formato anglo: 1,234.56
@@ -82,8 +83,20 @@ if not datos:
     st.warning("⚠️ No hay datos cargados.")
 else:
     # MÉTRICAS (Calculadas con números reales)
-    total_usd = sum(limpiar_numero(f.get("USD", 0)) for f in datos if hoy_str in str(f.get("FECHA", "")))
-    total_bs = sum(limpiar_numero(f.get("Bs", 0)) for f in datos if hoy_str in str(f.get("FECHA", "")))
+    total_usd = 0
+    total_bs = 0
+    
+    for f in datos:
+        # Verificar si la fecha coincide con hoy
+        fecha_fila = str(f.get("FECHA", ""))
+        if hoy_str in fecha_fila:
+            # Limpiar y sumar USD
+            usd_val = limpiar_numero(f.get("USD", ""))
+            total_usd += usd_val
+            
+            # Limpiar y sumar Bs (Aquí está la corrección)
+            bs_val = limpiar_numero(f.get("Bs", ""))
+            total_bs += bs_val
     
     col1, col2, col3 = st.columns(3)
     # Aquí aplicamos el formato visual
@@ -127,7 +140,6 @@ else:
             df_mostrar = [datos[i] for i in indices_coincidentes]
             
             # Editor interactivo
-            # IMPORTANTE: st.data_editor devuelve una lista si la entrada es una lista
             datos_editados = st.data_editor(
                 df_mostrar,
                 num_rows="dynamic",
@@ -158,10 +170,6 @@ else:
             with col_sync:
                 if st.button("💾 SINCRONIZAR CON DRIVE", type="primary", use_container_width=True):
                     try:
-                        # CORRECCIÓN DEL ERROR:
-                        # Como df_mostrar era una lista, datos_editados es una lista de diccionarios.
-                        # No usamos .to_dict('records')
-                        
                         # Limpiar filas vacías creadas por el editor
                         datos_a_guardar = [f for f in datos_editados if any(f.values())]
                         
