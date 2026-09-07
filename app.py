@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
-import json
+import csv
+import io
 from datetime import datetime
 import pytz
 
@@ -11,51 +12,78 @@ zona_co = pytz.timezone('America/Bogota')
 hoy_co = datetime.now(zona_co)
 hoy_str = hoy_co.strftime("%d/%m/%Y")
 
-# PEGA AQUÍ LA URL QUE TE DIO GOOGLE APPS SCRIPT EN EL PASO 1
-APPS_SCRIPT_URL = "PEGA_TU_URL_DE_APPS_SCRIPT_AQUI"
+# URL DIRECTA DE TU HOJA (Exportación CSV)
+# Nota: Esto solo funciona si la hoja está compartida como "Cualquiera con el enlace"
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/16XJJ17pfE7n-O8jBhRRTb-niqh0LBYqwubcECsjwOdA/export?format=csv"
 
-# --- FUNCIÓN DE LIMPIEZA MANUAL (SIN PANDAS) ---
+# --- FUNCIÓN DE LIMPIEZA MANUAL (EL SECRETO) ---
 def limpiar_numero(valor):
-    """Convierte '$ 1.234,56' a 1234.56 manualmente"""
+    """
+    Convierte cualquier formato a número real.
+    Ejemplos: "$ 1.234,56" -> 1234.56 | "1,234.56" -> 1234.56
+    """
     if not valor: return 0.0
     try:
-        # 1. Quitar símbolos de moneda y espacios
+        # 1. Quitar símbolos innecesarios
         texto = str(valor).replace('$', '').replace(' ', '').strip()
-        # 2. Si tiene coma decimal, la convertimos a punto
-        if ',' in texto:
-            texto = texto.replace('.', '').replace(',', '.')
+        
+        # 2. Detectar formato
+        if ',' in texto and '.' in texto:
+            # Si hay ambos, el último es el decimal
+            if texto.rfind(',') > texto.rfind('.'):
+                # Formato Latino: 1.234,56
+                texto = texto.replace('.', '').replace(',', '.')
+            else:
+                # Formato Anglo: 1,234.56
+                texto = texto.replace(',', '')
+        elif ',' in texto:
+            # Solo coma: asumimos decimal latino (123,45)
+            texto = texto.replace(',', '.')
+        elif '.' in texto:
+            # Solo punto: asumimos decimal anglo (123.45)
+            pass
+            
         return float(texto)
     except:
         return 0.0
 
-# --- CARGA DE DATOS (SIN PANDAS) ---
+# --- CARGA DE DATOS SIN PANDAS ---
 @st.cache_data(ttl=60)
-def load_data_raw():
+def load_data():
     try:
-        response = requests.get(APPS_SCRIPT_URL)
-        data = response.json()
-        if not data:
-            return []
+        # Descargamos el contenido como texto puro
+        response = requests.get(SPREADSHEET_URL)
+        response.raise_for_status()
         
-        # La primera fila suele ser el encabezado
-        headers = data[0]
-        rows = data[1:]
+        # Usamos el lector CSV nativo de Python (mucho más tolerante)
+        reader = csv.reader(io.StringIO(response.text))
         
-        # Convertir a lista de diccionarios para mantener el formato original
-        df = []
-        for row in rows:
-            # Asegurar que la fila tenga el largo correcto
-            if len(row) >= len(headers):
-                item = {headers[i]: row[i] for i in range(len(headers))}
-                df.append(item)
-        return df
+        # Convertir a lista de diccionarios
+        data = []
+        headers = []
+        for i, row in enumerate(reader):
+            if i == 0:
+                headers = row
+            else:
+                # Verificar que la fila no esté vacía
+                if not any(row):
+                    continue
+                # Crear diccionario solo con las columnas que existen
+                item = {}
+                for j, header in enumerate(headers):
+                    if j < len(row):
+                        item[header] = row[j]
+                    else:
+                        item[header] = ""
+                data.append(item)
+        return data
     except Exception as e:
-        st.error(f"Error al conectar: {e}")
+        st.error(f"Error al descargar: {e}")
         return []
 
 # --- INICIALIZACIÓN ---
 if "datos_base" not in st.session_state:
-    st.session_state.datos_base = load_data_raw()
+    st.session_state.datos_base = load_data()
 
 datos = st.session_state.datos_base
 
@@ -63,19 +91,17 @@ datos = st.session_state.datos_base
 st.title("📊 Control Diario Nova")
 
 if not datos:
-    st.warning("⚠️ No se han cargado datos. Verifica la URL de Apps Script.")
+    st.warning("⚠️ No hay datos. Verifica que la hoja esté compartida con 'Cualquiera con el enlace'.")
 else:
-    # CÁLCULO DE MÉTRICAS (Usando la limpieza manual)
+    # MÉTRICAS (Usando limpieza manual)
     total_usd = 0
     total_bs = 0
     for fila in datos:
-        fecha_fila = str(fila.get("FECHA", ""))
-        if hoy_str in fecha_fila:
+        if hoy_str in str(fila.get("FECHA", "")):
             total_usd += limpiar_numero(fila.get("USD", 0))
             total_bs += limpiar_numero(fila.get("Bs", 0))
 
     col1, col2, col3 = st.columns(3)
-    # Mostramos los valores tal cual los calculamos
     col1.metric("TOTAL USD HOY", f"$ {total_usd:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
     col2.metric("TOTAL Bs HOY", f"$ {total_bs:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
     col3.metric("COMISIÓN (15%)", f"$ {total_usd * 0.15:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
@@ -93,6 +119,7 @@ else:
             
             if st.form_submit_button("✓ GUARDAR (SOLO SESIÓN)"):
                 if cuenta_input:
+                    # Guardamos el formato visual que tú quieras
                     nueva = {
                         "FECHA": hoy_str,
                         "CUENTA": cuenta_input,
@@ -111,11 +138,11 @@ else:
         anio_filtro = st.text_input("Año (YYYY):", hoy_co.strftime("%Y"))
         patron = f"/{mes_filtro.zfill(2)}/{anio_filtro}"
         
-        # Filtrar manualmente
+        # Filtrado manual
         datos_filtrados = [f for f in datos if patron in str(f.get("FECHA", ""))]
         
         if datos_filtrados:
-            # Mostrar tabla con los datos EXACTOS de la hoja
+            # st.dataframe acepta listas de diccionarios perfectamente
             st.dataframe(datos_filtrados, use_container_width=True)
         else:
             st.info("📭 No hay datos para este periodo.")
