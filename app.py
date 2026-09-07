@@ -1,22 +1,28 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import pytz
 
 st.set_page_config(page_title="Control Diario Nova", layout="wide")
+
+# Configurar zona horaria de Colombia de forma estricta
+zona_co = pytz.timezone('America/Bogota')
+hoy_co = datetime.now(zona_co)
+hoy_str = hoy_co.strftime("%d/%m/%Y")
 
 # Usamos st.session_state para almacenar los datos en la memoria de la aplicación
 if "df_base" not in st.session_state:
     url_base = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    
+    # Limpieza manual del ID para evitar errores con split
     if "/edit" in url_base:
-        # CORRECCIÓN ENLACE: Extraemos el ID base correctamente usando split
-        partes = url_base.split('/edit')
-        url_csv = f"{partes[0]}/export?format=csv"
+        id_sheet = url_base.split("/d/")[1].split("/edit")[0]
+        url_csv = f"https://google.com{id_sheet}/export?format=csv"
     else:
         url_csv = url_base
+        
     try:
-        # Carga inicial desde tu Google Sheet en la nube
         df_inicial = pd.read_csv(url_csv)
-        # Aseguramos tus columnas exactas en orden
         for col in ["FECHA", "CUENTA", "USD", "Bs"]:
             if col not in df_inicial.columns:
                 df_inicial[col] = None
@@ -28,23 +34,19 @@ if "df_base" not in st.session_state:
 # --- PROCESAMIENTO DE DATOS EN TIEMPO REAL ---
 df_trabajo = st.session_state.df_base.copy()
 
-# Limpieza matemática interna instantánea para las tarjetas de totales
 df_trabajo["USD_CALC"] = pd.to_numeric(df_trabajo["USD"].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0.0)
 df_trabajo["Bs_CALC"] = pd.to_numeric(df_trabajo["Bs"].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0.0)
 
-# Formateador visual idéntico al de tu tabla original
 def fmt(v):
     return f"$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- RESUMEN DE HOY ---
-hoy_str = datetime.now().strftime("%d/%m/%Y")
+# --- RESUMEN DE HOY (Usando la fecha estricta de Colombia) ---
 df_hoy = df_trabajo[df_trabajo["FECHA"].astype(str).str.contains(hoy_str, na=False)]
 
 total_usd_hoy = df_hoy["USD_CALC"].sum()
 total_bs_hoy = df_hoy["Bs_CALC"].sum()
 comision_hoy = total_usd_hoy * 0.15
 
-# Encabezado principal y tarjetas con actualización inmediata
 st.title("📊 Control Diario Nova")
 col1, col2, col3 = st.columns(3)
 col1.metric("TOTAL USD HOY", fmt(total_usd_hoy))
@@ -54,7 +56,6 @@ col3.metric("COMISIÓN HOY (15%)", fmt(comision_hoy))
 st.markdown("---")
 
 # --- DISEÑO DE PANTALLA ---
-# CORRECCIÓN EN COLUMNS: Pasamos explícitamente el número 2 para dividir en dos columnas
 col_izq, col_der = st.columns(2)
 
 with col_izq:
@@ -70,11 +71,9 @@ with col_izq:
             if not cuenta_input:
                 st.error("El campo CUENTA es obligatorio.")
             else:
-                # Formateamos valores como texto idéntico a tu Google Sheet original
                 usd_formateado = f"$ {usd_input:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if usd_input > 0 else None
                 bs_formateado = f"$ {bs_input:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if bs_input > 0 else None
                 
-                # Crear la nueva fila
                 nueva_fila = pd.DataFrame([{
                     "FECHA": hoy_str,
                     "CUENTA": cuenta_input,
@@ -82,7 +81,6 @@ with col_izq:
                     "Bs": bs_formateado
                 }])
                 
-                # Insertar al estado de la aplicación e inyectar cambios
                 st.session_state.df_base = pd.concat([st.session_state.df_base, nueva_fila], ignore_index=True)
                 st.success("¡Transacción añadida exitosamente abajo!")
                 st.rerun()
@@ -91,14 +89,13 @@ with col_der:
     st.subheader("🔍 Historial y Filtro Mensual Interactivo")
     
     col_m, col_a = st.columns(2)
-    mes_filtro = col_m.text_input("Mes (MM):", datetime.now().strftime("%m"))
-    anio_filtro = col_a.text_input("Año (YYYY):", datetime.now().strftime("%Y"))
+    mes_filtro = col_m.text_input("Mes (MM):", hoy_co.strftime("%m"))
+    anio_filtro = col_a.text_input("Año (YYYY):", hoy_co.strftime("%Y"))
     
-    # Filtrar el historial dinámicamente según el mes y año solicitado
     patron = f"/{mes_filtro.zfill(2)}/{anio_filtro}"
     df_filtrado = df_trabajo[df_trabajo["FECHA"].astype(str).str.contains(patron, na=False)]
     
-    st.info("💡 **Cómo eliminar registros:** Selecciona la casilla de la fila que deseas borrar en el cuadro de abajo y presiona el botón **Eliminar** de tu teclado (o el icono de papelera). Los totales de arriba cambiarán al instante.")
+    st.info("💡 **Cómo eliminar:** Selecciona la casilla de la fila a borrar abajo, presiona 'Eliminar/Supr' en tu teclado y luego haz clic en el botón de guardar cambios.")
     
     # El editor de datos interactivo
     datos_editados = st.data_editor(
@@ -108,10 +105,10 @@ with col_der:
         key="tabla_interactiva"
     )
     
-    # Sincronizar cualquier cambio o eliminación realizada en la tabla interactiva hacia la memoria principal
-    if st.checkbox("💾 Confirmar y aplicar cambios del historial"):
+    # MEJORA: Ahora es un botón directo y llamativo en lugar de una casilla de verificación
+    if st.button("💾 GUARDAR CAMBIOS DEL HISTORIAL", type="primary", use_container_width=True):
         lineas_actuales = st.session_state.df_base.copy()
         df_resto = lineas_actuales[~lineas_actuales["FECHA"].astype(str).str.contains(patron, na=False)]
         st.session_state.df_base = pd.concat([df_resto, datos_editados], ignore_index=True)
-        st.success("¡Historial sincronizado!")
+        st.success("¡Cambios aplicados e historial sincronizado con éxito!")
         st.rerun()
