@@ -14,10 +14,9 @@ hoy_str = hoy_co.strftime("%d/%m/%Y")
 if "df_base" not in st.session_state:
     url_base = st.secrets["connections"]["gsheets"]["spreadsheet"]
     
-    # Limpieza manual del ID para evitar errores con split
+    # CONEXIÓN CORREGIDA: Convertimos el enlace de forma directa y segura
     if "/edit" in url_base:
-        id_sheet = url_base.split("/d/")[1].split("/edit")[0]
-        url_csv = f"https://google.com{id_sheet}/export?format=csv"
+        url_csv = url_base.split("/edit")[0] + "/export?format=csv"
     else:
         url_csv = url_base
         
@@ -40,7 +39,7 @@ df_trabajo["Bs_CALC"] = pd.to_numeric(df_trabajo["Bs"].astype(str).str.replace(r
 def fmt(v):
     return f"$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- RESUMEN DE HOY (Usando la fecha estricta de Colombia) ---
+# --- RESUMEN DE HOY ---
 df_hoy = df_trabajo[df_trabajo["FECHA"].astype(str).str.contains(hoy_str, na=False)]
 
 total_usd_hoy = df_hoy["USD_CALC"].sum()
@@ -105,7 +104,6 @@ with col_der:
         key="tabla_interactiva"
     )
     
-    # MEJORA: Ahora es un botón directo y llamativo en lugar de una casilla de verificación
     if st.button("💾 GUARDAR CAMBIOS DEL HISTORIAL", type="primary", use_container_width=True):
         lineas_actuales = st.session_state.df_base.copy()
         df_resto = lineas_actuales[~lineas_actuales["FECHA"].astype(str).str.contains(patron, na=False)]
