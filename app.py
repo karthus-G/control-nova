@@ -14,8 +14,8 @@ hoy_str = hoy_co.strftime("%d/%m/%Y")
 # URL de tu hoja (para lectura)
 READ_URL = "https://docs.google.com/spreadsheets/d/16XJJ17pfE7n-O8jBhRRTb-niqh0LBYqwubcECsjwOdA/export?format=csv"
 
-# URL DE TU APPS SCRIPT (¡Asegúrate de usar la NUEVA URL si la cambiaste!)
-WRITE_URL = "https://script.google.com/macros/s/AKfycbx0tSVe-9Q9rEjeylvuPRnK-rV_RTZhAhU_Ul75CpwmeTvf8442pM3O6-nhm4mu8wkawA/exec"
+# URL DE TU APPS SCRIPT (¡Actualizada con tu nueva URL!)
+WRITE_URL = "https://script.google.com/macros/s/AKfycbyFWA4RbMCZqL5QslO_h1bFhUVHJtCELX9g8Lt6QPC9JfOC3kr70EJlPckrTOaEa065-A/exec"
 
 # --- FUNCIONES DE AYUDA ---
 
