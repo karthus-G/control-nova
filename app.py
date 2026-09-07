@@ -127,7 +127,8 @@ else:
             df_mostrar = [datos[i] for i in indices_coincidentes]
             
             # Editor interactivo
-            df_editado = st.data_editor(
+            # IMPORTANTE: st.data_editor devuelve una lista si la entrada es una lista
+            datos_editados = st.data_editor(
                 df_mostrar,
                 num_rows="dynamic",
                 use_container_width=True,
@@ -156,15 +157,18 @@ else:
             
             with col_sync:
                 if st.button("💾 SINCRONIZAR CON DRIVE", type="primary", use_container_width=True):
-                    # 1. Preparar datos para enviar
-                    # Convertimos el dataframe editado a lista de dicts
-                    datos_editados = df_editado.to_dict('records')
-                    
                     try:
+                        # CORRECCIÓN DEL ERROR:
+                        # Como df_mostrar era una lista, datos_editados es una lista de diccionarios.
+                        # No usamos .to_dict('records')
+                        
+                        # Limpiar filas vacías creadas por el editor
+                        datos_a_guardar = [f for f in datos_editados if any(f.values())]
+                        
                         # Enviar a Apps Script
                         payload = {
                             "action": "update",
-                            "data": datos_editados
+                            "data": datos_a_guardar
                         }
                         response = requests.post(WRITE_URL, json=payload, timeout=10)
                         
