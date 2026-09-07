@@ -5,52 +5,65 @@ import pytz
 import gspread
 from google.oauth2.service_account import Credentials
 
-# 1. CONFIGURACIÓN Y CONEXIÓN A GOOGLE SHEETS
+# --- CONFIGURACIÓN Y CONEXIÓN ---
 def get_gsheet():
-    # Define scopes and credentials from secrets
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
+    # Cargar credenciales desde secrets.toml
     creds_dict = st.secrets["gcp_service_account"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     gc = gspread.authorize(creds)
-    return gc.open_by_key(st.secrets["spreadsheet_id"])
+    # Abrir la hoja por su ID
+    return gc.open_by_key("16XJJ17pfE7n-O8jBhRRTb-niqh0LBYqwubcECsjwOdA")
 
-# 2. FUNCIONES DE LECTURA/ESCRITURA
-@st.cache_data(ttl=60) # Cachea la lectura por 60s para no saturar la API
+# --- FUNCIONES DE DATOS ---
+@st.cache_data(ttl=60) # Cachea por 60 segundos para ahorrar llamadas a la API
 def load_data():
     try:
         sh = get_gsheet()
-        worksheet = sh.sheet1 # Ajusta el nombre de la hoja si es necesario
+        worksheet = sh.sheet1 # Asumiendo que la hoja principal se llama "Sheet1"
         data = worksheet.get_all_records()
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
+        
+        # Asegurar que existan las columnas necesarias
+        for col in ["FECHA", "CUENTA", "USD", "Bs"]:
+            if col not in df.columns:
+                df[col] = None
+        return df
     except Exception as e:
-        st.error(f"Error al leer datos: {e}")
-        return pd.DataFrame(columns=["FECHA", "CUENTA", "USD", "Bs"])
+        st.error(f"Error de conexión: {e}")
+        st.stop()
 
-def save_new_transaction(fecha, cuenta, usd, bs):
+def save_transaction(fecha, cuenta, usd, bs):
+    """Guarda una nueva fila en Google Sheets"""
     sh = get_gsheet()
     worksheet = sh.sheet1
     worksheet.append_row([fecha, cuenta, usd, bs])
 
-# 3. LÓGICA DE LA APP
+# --- INICIALIZACIÓN ---
 st.set_page_config(page_title="Control Diario Nova", layout="wide")
 
 zona_co = pytz.timezone('America/Bogota')
 hoy_co = datetime.now(zona_co)
 hoy_str = hoy_co.strftime("%d/%m/%Y")
 
-# Cargar datos iniciales
+# Cargar datos
 if "df_base" not in st.session_state:
     st.session_state.df_base = load_data()
 
 df_trabajo = st.session_state.df_base.copy()
 
-# Procesamiento numérico
+# --- PROCESAMIENTO ---
 def clean_money(v):
     if pd.isna(v): return 0.0
-    return float(str(v).replace('$', '').replace(',', '').replace('.', '')) if str(v).strip() != '' else 0.0
+    # Limpia símbolos de moneda y puntos de miles
+    clean = str(v).replace('$', '').replace(',', '').strip()
+    try:
+        return float(clean)
+    except:
+        return 0.0
 
 df_trabajo["USD_CALC"] = df_trabajo["USD"].apply(clean_money)
 df_trabajo["Bs_CALC"] = df_trabajo["Bs"].apply(clean_money)
@@ -61,16 +74,11 @@ def fmt(v):
 # --- INTERFAZ ---
 st.title("📊 Control Diario Nova")
 
-# MÉTRICAS
-df_hoy = df_trabajo[df_trabajo["FECHA"].astype(str).str.contains(hoy_str, na=False)]
-total_usd = df_hoy["USD_CALC"].sum()
-total_bs = df_hoy["Bs_CALC"].sum()
-comision = total_usd * 0.15
-
 col1, col2, col3 = st.columns(3)
-col1.metric("TOTAL USD HOY", fmt(total_usd))
-col2.metric("TOTAL Bs HOY", fmt(total_bs))
-col3.metric("COMISIÓN (15%)", fmt(comision))
+df_hoy = df_trabajo[df_trabajo["FECHA"].astype(str).str.contains(hoy_str, na=False)]
+col1.metric("TOTAL USD HOY", fmt(df_hoy["USD_CALC"].sum()))
+col2.metric("TOTAL Bs HOY", fmt(df_hoy["Bs_CALC"].sum()))
+col3.metric("COMISIÓN (15%)", fmt(df_hoy["USD_CALC"].sum() * 0.15))
 
 st.markdown("---")
 
@@ -85,18 +93,21 @@ with col_izq:
         
         if st.form_submit_button("✓ GUARDAR EN DRIVE"):
             if cuenta_input:
-                # Guardar en Drive
-                save_new_transaction(hoy_str, cuenta_input, usd_input, bs_input)
-                st.session_state.df_base = load_data() # Recargar para ver el cambio
-                st.success("¡Transacción sincronizada con Google Drive!")
+                # Guardar y recargar
+                save_transaction(hoy_str, cuenta_input, usd_input, bs_input)
+                st.cache_data.clear() # Limpiar caché para ver el cambio inmediato
+                st.session_state.df_base = load_data()
+                st.success("¡Transacción sincronizada!")
                 st.rerun()
             else:
                 st.error("El campo CUENTA es obligatorio.")
 
 with col_der:
     st.subheader("🔍 Historial del Mes")
-    # Aquí mantienes tu lógica de filtro y data_editor, pero recuerda que 
-    # para que el data_editor guarde, necesitas una función similar a save_new_transaction 
-    # que reemplace los valores en la hoja.
-    st.info("💡 Para que los cambios en la tabla se guarden, necesitas implementar una función de actualización masiva en gspread.")
-    st.dataframe(df_trabajo.tail(10)) # Muestra las últimas 10 para no saturar
+    mes_filtro = st.text_input("Mes (MM):", hoy_co.strftime("%m"))
+    anio_filtro = st.text_input("Año (YYYY):", hoy_co.strftime("%Y"))
+    
+    patron = f"/{mes_filtro.zfill(2)}/{anio_filtro}"
+    df_filtrado = df_trabajo[df_trabajo["FECHA"].astype(str).str.contains(patron, na=False)]
+    
+    st.dataframe(df_filtrado[["FECHA", "CUENTA", "USD", "Bs"]], use_container_width=True)
