@@ -8,8 +8,9 @@ st.set_page_config(page_title="Control Diario Nova", layout="wide")
 if "df_base" not in st.session_state:
     url_base = st.secrets["connections"]["gsheets"]["spreadsheet"]
     if "/edit" in url_base:
-        # CORRECCIÓN AQUÍ: Usamos f-string en lugar de concatenar listas
-        url_csv = f"{url_base.split('/edit')[0]}/export?format=csv"
+        # CORRECCIÓN ENLACE: Extraemos el ID base correctamente usando split
+        partes = url_base.split('/edit')
+        url_csv = f"{partes[0]}/export?format=csv"
     else:
         url_csv = url_base
     try:
@@ -24,7 +25,7 @@ if "df_base" not in st.session_state:
         st.error("Error al conectar con la base de datos de Google Drive. Revisa el enlace en Secrets.")
         st.stop()
 
-# --- PROCESAMENTO DE DATOS EN TIEMPO REAL ---
+# --- PROCESAMIENTO DE DATOS EN TIEMPO REAL ---
 df_trabajo = st.session_state.df_base.copy()
 
 # Limpieza matemática interna instantánea para las tarjetas de totales
@@ -53,7 +54,8 @@ col3.metric("COMISIÓN HOY (15%)", fmt(comision_hoy))
 st.markdown("---")
 
 # --- DISEÑO DE PANTALLA ---
-col_izq, col_der = st.columns()
+# CORRECCIÓN EN COLUMNS: Pasamos explícitamente el número 2 para dividir en dos columnas
+col_izq, col_der = st.columns(2)
 
 with col_izq:
     st.subheader("📝 Nueva Transacción")
