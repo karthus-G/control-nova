@@ -1,198 +1,178 @@
 import streamlit as st
-import requests
-import csv
-import io
+import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
 from datetime import datetime
 import pytz
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Control Diario Nova", layout="wide")
-zona_co = pytz.timezone('America/Bogota')
-hoy_co = datetime.now(zona_co)
-hoy_str = hoy_co.strftime("%d/%m/%Y")
 
-# URL de tu hoja (para lectura)
-READ_URL = "https://docs.google.com/spreadsheets/d/16XJJ17pfE7n-O8jBhRRTb-niqh0LBYqwubcECsjwOdA/export?format=csv"
+# 1. CONEXIÓN A GOOGLE SHEETS (Usando Secrets)
+def get_sheet():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    # Cargar credenciales del secrets.toml
+    creds_dict = st.secrets["gcp_service_account"]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    gc = gspread.authorize(creds)
+    
+    # ID de tu hoja
+    spreadsheet_id = "16XJJ17pfE7n-O8jBhRRTb-niqh0LBYqwubcECsjwOdA"
+    sheet = gc.open_by_key(spreadsheet_id).sheet1
+    return sheet
 
-# URL DE TU APPS SCRIPT (¡Actualizada con tu nueva URL!)
-WRITE_URL = "https://script.google.com/macros/s/AKfycbyFWA4RbMCZqL5QslO_h1bFhUVHJtCELX9g8Lt6QPC9JfOC3kr70EJlPckrTOaEa065-A/exec"
-
-# --- FUNCIONES DE AYUDA ---
+# 2. FUNCIONES DE FORMATO
+def formatear_numero(valor):
+    """Convierte número a formato latino: $ 1.234,56"""
+    if not valor: return "$ 0,00"
+    formato = f"${valor:,.2f}"
+    return formato.replace(",", "X").replace(".", ",").replace("X", ".")
 
 def limpiar_numero(valor):
-    """Convierte cualquier formato a número real (float) para cálculos"""
+    """Convierte texto a número para cálculos"""
     if not valor: return 0.0
     try:
         texto = str(valor).replace('$', '').replace(' ', '').strip()
         if not texto: return 0.0
-        # Lógica para detectar formato
+        # Manejo básico de formatos
         if ',' in texto and '.' in texto:
-            # Si la coma va después del punto, es formato anglo: 1,234.56
             if texto.rfind(',') > texto.rfind('.'):
-                texto = texto.replace('.', '') # Quitar miles
-            else:
-                # Formato latino: 1.234,56 -> quitar punto, cambiar coma por punto
                 texto = texto.replace('.', '').replace(',', '.')
+            else:
+                texto = texto.replace(',', '')
         elif ',' in texto:
-            # Solo coma: 123,45 -> formato latino
             texto = texto.replace(',', '.')
-        # Si solo tiene punto, ya está en formato anglo
         return float(texto)
     except:
         return 0.0
 
-def formatear_numero(valor):
-    """Convierte un número a formato latino: $ 1.234,56"""
-    if not valor: return "$ 0,00"
-    # Formateamos con punto para miles y coma para decimales
-    # Primero usamos el formato estándar y luego intercambiamos los separadores
-    formato = f"${valor:,.2f}" # Ejemplo: $1,234.56
-    # Intercambiamos: ',' por 'X', '.' por ',', 'X' por '.'
-    return formato.replace(",", "X").replace(".", ",").replace("X", ".")
-
-# --- CARGA DE DATOS ---
+# 3. CARGA Y GUARDADO
 @st.cache_data(ttl=60)
 def load_data():
     try:
-        response = requests.get(READ_URL)
-        reader = csv.reader(io.StringIO(response.text))
-        data = []
-        headers = []
-        for i, row in enumerate(reader):
-            if i == 0:
-                headers = row
-            else:
-                if not any(row): continue
-                item = {headers[j]: row[j] for j in range(len(headers)) if j < len(row)}
-                data.append(item)
-        return data
+        sheet = get_sheet()
+        # get_all_records convierte a lista de diccionarios
+        return sheet.get_all_records()
     except Exception as e:
-        st.error(f"Error al leer: {e}")
+        st.error(f"Error de conexión: {e}")
         return []
 
+def save_data(data_list):
+    """Reemplaza TODOS los datos de la hoja con la nueva lista"""
+    sheet = get_sheet()
+    # Convertir lista de diccionarios a lista de listas para gspread
+    if not data_list: return
+    
+    headers = list(data_list[0].keys())
+    rows = [headers]
+    for item in data_list:
+        row = [item.get(h, "") for h in headers]
+        rows.append(row)
+        
+    # Limpiar hoja y escribir todo de nuevo (Método más seguro para evitar duplicados)
+    sheet.clear()
+    sheet.update(range="A1", values=rows)
+
 # --- INICIALIZACIÓN ---
+zona_co = pytz.timezone('America/Bogota')
+hoy_co = datetime.now(zona_co)
+hoy_str = hoy_co.strftime("%d/%m/%Y")
+
 if "datos_base" not in st.session_state:
     st.session_state.datos_base = load_data()
 
 datos = st.session_state.datos_base
 
-# --- INTERFAZ PRINCIPAL ---
+# --- INTERFAZ ---
 st.title("📊 Control Diario Nova")
 
 if not datos:
-    st.warning("⚠️ No hay datos cargados.")
+    st.warning("⚠️ No hay datos. Revisa las credenciales.")
 else:
-    # MÉTRICAS (Calculadas con números reales)
-    total_usd = 0
-    total_bs = 0
-    
-    for f in datos:
-        # Verificar si la fecha coincide con hoy
-        fecha_fila = str(f.get("FECHA", ""))
-        if hoy_str in fecha_fila:
-            # Limpiar y sumar USD
-            usd_val = limpiar_numero(f.get("USD", ""))
-            total_usd += usd_val
-            
-            # Limpiar y sumar Bs (Aquí está la corrección)
-            bs_val = limpiar_numero(f.get("Bs", ""))
-            total_bs += bs_val
+    # MÉTRICAS
+    total_usd = sum(limpiar_numero(f.get("USD", 0)) for f in datos if hoy_str in str(f.get("FECHA", "")))
+    total_bs = sum(limpiar_numero(f.get("Bs", 0)) for f in datos if hoy_str in str(f.get("FECHA", "")))
     
     col1, col2, col3 = st.columns(3)
-    # Aquí aplicamos el formato visual
     col1.metric("TOTAL USD HOY", formatear_numero(total_usd))
     col2.metric("TOTAL Bs HOY", formatear_numero(total_bs))
     col3.metric("COMISIÓN (15%)", formatear_numero(total_usd * 0.15))
-    st.markdown("---")
     
+    st.markdown("---")
     col_izq, col_der = st.columns(2)
     
     with col_izq:
-        st.subheader("📝 Nueva Transacción")
-        with st.form(key="transaccion_form", clear_on_submit=True):
-            cuenta_input = st.text_input("CUENTA:").strip().upper()
-            usd_input = st.number_input("USD:", min_value=0.0, step=0.01, format="%.2f")
-            bs_input = st.number_input("Bs:", min_value=0.0, step=0.01, format="%.2f")
+        st.subheader("📝 Agregar")
+        with st.form(key="add_form", clear_on_submit=True):
+            cuenta = st.text_input("CUENTA:").upper()
+            usd = st.number_input("USD:", min_value=0.0, step=0.01)
+            bs = st.number_input("Bs:", min_value=0.0, step=0.01)
             
             if st.form_submit_button("✓ AGREGAR"):
-                if cuenta_input:
+                if cuenta:
                     nueva = {
                         "FECHA": hoy_str,
-                        "CUENTA": cuenta_input,
-                        "USD": formatear_numero(usd_input),
-                        "Bs": formatear_numero(bs_input)
+                        "CUENTA": cuenta,
+                        "USD": formatear_numero(usd),
+                        "Bs": formatear_numero(bs)
                     }
                     st.session_state.datos_base.append(nueva)
-                    st.success("Agregado a la sesión (pendiente de sincronizar)")
+                    st.success("Agregado. Sincroniza para guardar.")
                     st.rerun()
-    
+
     with col_der:
-        st.subheader("🔍 Historial y Edición")
-        mes_filtro = st.text_input("Mes (MM):", hoy_co.strftime("%m"))
-        anio_filtro = st.text_input("Año (YYYY):", hoy_co.strftime("%Y"))
-        patron = f"/{mes_filtro.zfill(2)}/{anio_filtro}"
+        st.subheader("🔍 Historial")
+        mes = st.text_input("Mes (MM):", hoy_co.strftime("%m"))
+        anio = st.text_input("Año (YYYY):", hoy_co.strftime("%Y"))
+        patron = f"/{mes.zfill(2)}/{anio}"
         
-        indices_coincidentes = [i for i, f in enumerate(datos) if patron in str(f.get("FECHA", ""))]
+        # Filtrar índices para no perder la referencia original
+        indices_filtro = [i for i, f in enumerate(datos) if patron in str(f.get("FECHA", ""))]
         
-        if not indices_coincidentes:
-            st.info("📭 No hay datos para este periodo.")
-        else:
-            df_mostrar = [datos[i] for i in indices_coincidentes]
+        if indices_filtro:
+            df_mostrar = [datos[i] for i in indices_filtro]
             
-            # Editor interactivo
-            datos_editados = st.data_editor(
+            # Editor
+            df_editado = st.data_editor(
                 df_mostrar,
                 num_rows="dynamic",
                 use_container_width=True,
-                key="editor_tabla",
+                key="editor_gspread",
                 hide_index=True,
                 column_config={
-                    "FECHA": st.column_config.TextColumn("Fecha", width="medium"),
-                    "CUENTA": st.column_config.TextColumn("Cuenta", width="medium"),
-                    "USD": st.column_config.TextColumn(
-                        "USD", 
-                        width="medium",
-                        help="Formato: $ 1.234,56"
-                    ),
-                    "Bs": st.column_config.TextColumn(
-                        "Bs", 
-                        width="medium",
-                        help="Formato: $ 1.234,56"
-                    ),
+                    "FECHA": st.column_config.TextColumn("Fecha"),
+                    "CUENTA": st.column_config.TextColumn("Cuenta"),
+                    "USD": st.column_config.TextColumn("USD"),
+                    "Bs": st.column_config.TextColumn("Bs"),
                 }
             )
             
-            st.markdown("**⚠️ Los cambios se aplicarán a tu Google Sheet al hacer clic en Sincronizar**")
+            st.markdown("---")
             
-            # Botones de acción
-            col_sync, col_cancel = st.columns(2)
-            
-            with col_sync:
-                if st.button("💾 SINCRONIZAR CON DRIVE", type="primary", use_container_width=True):
-                    try:
-                        # Limpiar filas vacías creadas por el editor
-                        datos_a_guardar = [f for f in datos_editados if any(f.values())]
-                        
-                        # Enviar a Apps Script
-                        payload = {
-                            "action": "update",
-                            "data": datos_a_guardar
-                        }
-                        response = requests.post(WRITE_URL, json=payload, timeout=10)
-                        
-                        if response.status_code == 200 and response.json().get("status") == "success":
-                            # Actualizar la sesión local con lo que acabamos de guardar
-                            st.session_state.datos_base = load_data()
-                            st.success("✅ ¡Guardado exitosamente en Google Sheets!")
-                            st.rerun()
-                        else:
-                            st.error("❌ Error al guardar: " + response.json().get("message", "Desconocido"))
-                            
-                    except Exception as e:
-                        st.error(f"Error de conexión: {e}")
-                        st.info("Asegúrate de que la URL de Apps Script sea correcta y esté pública.")
-
-            with col_cancel:
-                if st.button("🔄 RESETEAR", use_container_width=True):
-                    st.session_state.datos_base = load_data()
+            if st.button("💾 GUARDAR EN GOOGLE SHEETS", type="primary", use_container_width=True):
+                # 1. Obtener los datos editados
+                # Si df_editado es lista, usamos tal cual. Si es DataFrame, usamos to_dict
+                if isinstance(df_editado, pd.DataFrame):
+                    datos_editados = df_editado.to_dict('records')
+                else:
+                    datos_editados = df_editado
+                
+                # 2. Reconstruir la lista completa
+                # Quitamos los datos antiguos del filtro
+                datos_sin_filtro = [f for i, f in enumerate(datos) if i not in indices_filtro]
+                # Agregamos los nuevos
+                datos_completos = datos_sin_filtro + datos_editados
+                
+                # 3. Guardar
+                try:
+                    save_data(datos_completos)
+                    st.session_state.datos_base = load_data() # Recargar
+                    st.success("✅ ¡Guardado en Google Sheets!")
                     st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar: {e}")
+        else:
+            st.info("📭 No hay datos para este mes.")
