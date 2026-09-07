@@ -14,22 +14,40 @@ hoy_str = hoy_co.strftime("%d/%m/%Y")
 # URL de tu hoja (para lectura)
 READ_URL = "https://docs.google.com/spreadsheets/d/16XJJ17pfE7n-O8jBhRRTb-niqh0LBYqwubcECsjwOdA/export?format=csv"
 
-# URL DE TU APPS SCRIPT (¡Ya la tienes!)
+# URL DE TU APPS SCRIPT
 WRITE_URL = "https://script.google.com/macros/s/AKfycbx0tSVe-9Q9rEjeylvuPRnK-rV_RTZhAhU_Ul75CpwmeTvf8442pM3O6-nhm4mu8wkawA/exec"
 
 # --- FUNCIONES DE AYUDA ---
+
 def limpiar_numero(valor):
+    """Convierte cualquier formato a número real (float) para cálculos"""
     if not valor: return 0.0
     try:
         texto = str(valor).replace('$', '').replace(' ', '').strip()
+        # Lógica para detectar formato
         if ',' in texto and '.' in texto:
-            texto = texto.replace('.', '').replace(',', '.') if texto.rfind(',') > texto.rfind('.') else texto.replace(',', '')
-        elif ',' in texto: texto = texto.replace(',', '.')
+            # Si la coma va después del punto, es formato anglo: 1,234.56
+            if texto.rfind(',') > texto.rfind('.'):
+                texto = texto.replace('.', '') # Quitar miles
+            else:
+                # Formato latino: 1.234,56 -> quitar punto, cambiar coma por punto
+                texto = texto.replace('.', '').replace(',', '.')
+        elif ',' in texto:
+            # Solo coma: 123,45 -> formato latino
+            texto = texto.replace(',', '.')
+        # Si solo tiene punto, ya está en formato anglo
         return float(texto)
-    except: return 0.0
+    except:
+        return 0.0
 
 def formatear_numero(valor):
-    return f"$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    """Convierte un número a formato latino: $ 1.234,56"""
+    if not valor: return "$ 0,00"
+    # Formateamos con punto para miles y coma para decimales
+    # Primero usamos el formato estándar y luego intercambiamos los separadores
+    formato = f"${valor:,.2f}" # Ejemplo: $1,234.56
+    # Intercambiamos: ',' por 'X', '.' por ',', 'X' por '.'
+    return formato.replace(",", "X").replace(".", ",").replace("X", ".")
 
 # --- CARGA DE DATOS ---
 @st.cache_data(ttl=60)
@@ -63,11 +81,12 @@ st.title("📊 Control Diario Nova")
 if not datos:
     st.warning("⚠️ No hay datos cargados.")
 else:
-    # MÉTRICAS
+    # MÉTRICAS (Calculadas con números reales)
     total_usd = sum(limpiar_numero(f.get("USD", 0)) for f in datos if hoy_str in str(f.get("FECHA", "")))
     total_bs = sum(limpiar_numero(f.get("Bs", 0)) for f in datos if hoy_str in str(f.get("FECHA", "")))
     
     col1, col2, col3 = st.columns(3)
+    # Aquí aplicamos el formato visual
     col1.metric("TOTAL USD HOY", formatear_numero(total_usd))
     col2.metric("TOTAL Bs HOY", formatear_numero(total_bs))
     col3.metric("COMISIÓN (15%)", formatear_numero(total_usd * 0.15))
@@ -117,8 +136,16 @@ else:
                 column_config={
                     "FECHA": st.column_config.TextColumn("Fecha", width="medium"),
                     "CUENTA": st.column_config.TextColumn("Cuenta", width="medium"),
-                    "USD": st.column_config.NumberColumn("USD", width="medium"),
-                    "Bs": st.column_config.NumberColumn("Bs", width="medium"),
+                    "USD": st.column_config.TextColumn(
+                        "USD", 
+                        width="medium",
+                        help="Formato: $ 1.234,56"
+                    ),
+                    "Bs": st.column_config.TextColumn(
+                        "Bs", 
+                        width="medium",
+                        help="Formato: $ 1.234,56"
+                    ),
                 }
             )
             
@@ -130,6 +157,7 @@ else:
             with col_sync:
                 if st.button("💾 SINCRONIZAR CON DRIVE", type="primary", use_container_width=True):
                     # 1. Preparar datos para enviar
+                    # Convertimos el dataframe editado a lista de dicts
                     datos_editados = df_editado.to_dict('records')
                     
                     try:
@@ -141,7 +169,7 @@ else:
                         response = requests.post(WRITE_URL, json=payload, timeout=10)
                         
                         if response.status_code == 200 and response.json().get("status") == "success":
-                            # Actualizar la sesión local
+                            # Actualizar la sesión local con lo que acabamos de guardar
                             st.session_state.datos_base = load_data()
                             st.success("✅ ¡Guardado exitosamente en Google Sheets!")
                             st.rerun()
